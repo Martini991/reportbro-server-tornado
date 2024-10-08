@@ -109,7 +109,7 @@ class MainHandler(tornado.web.RequestHandler):
                 report_request.c.created_on < (now - datetime.timedelta(minutes=3)))
             )
 
-            total_size = self.db_connection.execute(select([func.sum(report_request.c.pdf_file_size)])).scalar()
+            total_size = self.db_connection.execute(select(func.sum(report_request.c.pdf_file_size))).scalar()
             if total_size and total_size > MAX_CACHE_SIZE:
                 # delete all reports older than 10 seconds to reduce db size for cached pdf files
                 self.db_connection.execute(report_request.delete().where(
@@ -122,11 +122,15 @@ class MainHandler(tornado.web.RequestHandler):
             # add report request into sqlite db, this enables downloading the report by url
             # (the report is identified by the key) without any post parameters.
             # This is needed for pdf and xlsx preview.
-            self.db_connection.execute(
-                report_request.insert(),
-                key=key, report_definition=json.dumps(report_definition),
-                data=json.dumps(data, default=jsonconverter), is_test_data=is_test_data,
-                pdf_file=report_file, pdf_file_size=len(report_file), created_on=now)
+            self.db_connection.execute(report_request.insert(), dict(
+                key=key,
+                report_definition=json.dumps(report_definition),
+                data=json.dumps(data, default=jsonconverter),
+                is_test_data=is_test_data,
+                pdf_file=report_file,
+                pdf_file_size=len(report_file),
+                created_on=now
+            ))
 
             self.write('key:' + key)
         except ReportBroError as exception:
@@ -148,15 +152,16 @@ class MainHandler(tornado.web.RequestHandler):
         if key and len(key) == 36:
             # the report is identified by a key which was saved
             # in an sqlite table during report preview with a PUT request
-            row = self.db_connection.execute(select([report_request]).where(report_request.c.key == key)).fetchone()
+
+            row = self.db_connection.execute(select(report_request).where(report_request.c.key == key)).fetchone()
             if not row:
                 raise_bad_request(reason='report not found (preview probably too old), update report preview and try again')
-            if output_format == 'pdf' and row['pdf_file']:
-                report_file = row['pdf_file']
+            if output_format == 'pdf' and row.pdf_file:
+                report_file = row.pdf_file
             else:
-                report_definition = json.loads(row['report_definition'])
-                data = json.loads(row['data'])
-                is_test_data = row['is_test_data']
+                report_definition = json.loads(row.report_definition)
+                data = json.loads(row.data)
+                is_test_data = row.is_test_data
                 report = Report(report_definition, data, is_test_data, additional_fonts=self.additional_fonts)
                 if report.errors:
                     raise_bad_request(reason='error generating report', report_errors=report.errors)
